@@ -1,13 +1,10 @@
 {
-  "name": "node-fetch-mirror",
+  "name": "netlify-proxy",
   "version": "1.0.0",
-  "description": "Forward every request to an origin host and relay the exact headers back to the client",
+  "description": "A simple Netlify Function proxy to mirror paths",
+  "main": "functions/proxy.js",
   "type": "module",
-  "engines": { "node": ">=18" },
-  "scripts": {
-    "start": "node index.js"
-  },
   "dependencies": {
-    "undici": "^6.17.0"
+    "node-fetch": "^3.4.1"
   }
 }
