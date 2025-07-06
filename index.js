@@ -1,42 +1,80 @@
-/*  Forward‑proxy server
-    Author: Gj4meZ
-    All comments in English (per user preference)             */
+/*  node-fetch-mirror
+    Mirrors any path to an origin host and relays ALL origin headers.
+    Author: <you>
+    ────────────────────────────────────────────────────────────
+    Configuration (environment variables)
+      ORIGIN_SCHEME  http  | https
+      ORIGIN_HOST    e.g. moz.com
+      ORIGIN_PORT    80    | 443 (optional; defaults by scheme)
+      // PLATFORM sets LISTEN_PORT automatically (Render, Fly.io, etc.)
+*/
 
-import http from 'http';
-import { createProxyServer } from 'http-proxy';
-import { WebSocketServer, WebSocket } from 'ws';
+import { createServer } from 'node:http';
+import { request } from 'undici';
 
-// === Configuration via environment variables ===
-const TARGET_HOST = process.env.TARGET_HOST || '127.0.0.1';
-const TARGET_PORT = process.env.TARGET_PORT || '8080';
-// Public port on the CDN platform (Fly.io sets PORT automatically)
-const LISTEN_PORT = process.env.PORT || 3000;
+// ── ENV & defaults ───────────────────────────────
+const ORIGIN_SCHEME = process.env.ORIGIN_SCHEME ?? 'https';
+const ORIGIN_HOST   = process.env.ORIGIN_HOST   ?? 'moz.com';
+const ORIGIN_PORT   = process.env.ORIGIN_PORT   ?? (ORIGIN_SCHEME === 'https' ? 443 : 80);
+const LISTEN_PORT   = process.env.PORT          ?? 3000;
 
-// Create an HTTP‑Proxy that also understands WebSockets
-const proxy = createProxyServer({
-  target: `http://${TARGET_HOST}:${TARGET_PORT}`,
-  ws: true,
-  changeOrigin: true,
-});
+// Only hop‑by‑hop headers must be stripped (RFC 7230 §6.1)
+const HOP_BY_HOP = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
 
-// Standard HTTP requests
-const server = http.createServer((req, res) => {
-  proxy.web(req, res, (err) => {
-    console.error('Proxy HTTP error:', err);
-    res.writeHead(502);
-    res.end('Bad gateway');
-  });
-});
+// ── Main HTTP server ─────────────────────────────
+createServer(async (req, res) => {
+  try {
+    // Build origin URL (same path & query)
+    const originUrl = `${ORIGIN_SCHEME}://${ORIGIN_HOST}:${ORIGIN_PORT}${req.url}`;
 
-// WebSocket upgrade (ws:// or wss://)
-server.on('upgrade', (req, socket, head) => {
-  proxy.ws(req, socket, head, (err) => {
-    console.error('Proxy WS error:', err);
-    socket.end();
-  });
-});
+    // Clone client headers to send upstream
+    const upstreamHeaders = { ...req.headers };
+    // Override host header so origin TLS/SNI matches
+    upstreamHeaders.host = ORIGIN_HOST;
 
-// Start listening
-server.listen(LISTEN_PORT, () => {
-  console.log(`Forward proxy listening on :${LISTEN_PORT} → ${TARGET_HOST}:${TARGET_PORT}`);
-});
+    // Make upstream request (streaming, keep method & body)
+    const upstream = await request(originUrl, {
+      method: req.method,
+      headers: upstreamHeaders,
+      body: req,
+      // Allow redirect? choose based on need:
+      redirect: 'manual',
+      // A pooled agent is automatic in undici
+    });
+
+    // Relay status & headers back to client
+    res.writeHead(upstream.statusCode, filterHeaders(upstream.headers));
+
+    // Stream body
+    upstream.body.pipe(res);
+
+    upstream.body.on('error', (err) => {
+      console.error('Upstream body error:', err);
+      res.destroy(err);
+    });
+  } catch (err) {
+    console.error('Proxy error:', err);
+    if (!res.headersSent) res.writeHead(502);
+    res.end('Bad Gateway');
+  }
+}).listen(LISTEN_PORT, () =>
+  console.log(`Mirror listening on :${LISTEN_PORT} → ${ORIGIN_SCHEME}://${ORIGIN_HOST}:${ORIGIN_PORT}`)
+);
+
+// ── Helper: strip hop‑by‑hop headers ─────────────
+function filterHeaders(headers) {
+  const filtered = {};
+  for (const [k, v] of Object.entries(headers)) {
+    if (!HOP_BY_HOP.has(k.toLowerCase())) filtered[k] = v;
+  }
+  return filtered;
+}
