@@ -1,0 +1,13 @@
+{
+  "name": "ws-forward-proxy",
+  "version": "1.0.0",
+  "description": "Tiny HTTP/WebSocket forward proxy for CDN hosting",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "http-proxy": "^1.18.1",
+    "ws": "^8.17.0"
+  }
+}
