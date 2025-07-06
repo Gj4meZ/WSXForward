@@ -5,6 +5,6 @@
   "main": "functions/proxy.js",
   "type": "module",
   "dependencies": {
-    "node-fetch": "^3.4.1"
+    "node-fetch": "^2.6.7"
   }
 }
